@@ -14,6 +14,8 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 import warnings
 warnings.filterwarnings('ignore')
 
+
+
 # ============================================
 # PAGE CONFIG
 # ============================================
@@ -319,12 +321,21 @@ load_css()
 # ============================================
 # DATA LOADING & PREPROCESSING
 # ============================================
+import os
+import pandas as pd
+import streamlit as st
+from sklearn.preprocessing import StandardScaler
+from sklearn.cluster import KMeans
 
 @st.cache_data
 def load_and_preprocess_data():
     """Load data and perform full feature engineering pipeline"""
     
-    df = pd.read_excel('Merged.xlsx')
+    # 1. استخدام مسار مطلق لمنع خطأ FileNotFoundError
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    file_path = os.path.join(BASE_DIR, 'Merged.xlsx')
+    
+    df = pd.read_excel(file_path)
     
     # STEP 1: Date Unification
     if 'WEEK (acled)' in df.columns:
@@ -349,7 +360,7 @@ def load_and_preprocess_data():
     
     if all([lebanon, palestine, jordan, israel]):
         df['Lebanon_Palestien_Jordan_Israel_Events'] = (
-            df[lebanon] + df[palestine] + df[jordan] + df[israel]
+            df[lebanon].fillna(0) + df[palestine].fillna(0) + df[jordan].fillna(0) + df[israel].fillna(0)
         )
         df.drop(columns=[lebanon, palestine, jordan, israel], inplace=True, errors='ignore')
     
@@ -357,7 +368,7 @@ def load_and_preprocess_data():
     syria = 'Syria_Events' if 'Syria_Events' in df.columns else None
     
     if all([turkey, syria]):
-        df['Turkey_And_Syria_Events'] = df[turkey] + df[syria]
+        df['Turkey_And_Syria_Events'] = df[turkey].fillna(0) + df[syria].fillna(0)
         df.drop(columns=[turkey, syria], inplace=True, errors='ignore')
     
     # STEP 4: War Intensity Clustering
@@ -365,12 +376,21 @@ def load_and_preprocess_data():
     existing_war = [col for col in war_features if col in df.columns]
     
     if len(existing_war) >= 3:
+        # 1. تنظيف القيم المفقودة نهائياً قبل التدريب
+        df[existing_war] = df[existing_war].fillna(0)
+        
         X_war = df[existing_war].copy()
+        
+        # 2. التأكد التام من عدم وجود أعداد نهائية أو NaN
+        X_war = X_war.dropna()
+        
         war_scaler = StandardScaler()
         X_war_scaled = war_scaler.fit_transform(X_war)
         
         kmeans = KMeans(n_clusters=3, random_state=42, n_init=10)
-        df['War_Cluster'] = kmeans.fit_predict(X_war_scaled)
+        
+        # تعيين النتائج للمؤشرات الصحيحة
+        df.loc[X_war.index, 'War_Cluster'] = kmeans.fit_predict(X_war_scaled)
         
         cluster_severity = df.groupby('War_Cluster')[existing_war].mean().sum(axis=1).sort_values()
         cluster_order = cluster_severity.index.tolist()
@@ -382,7 +402,10 @@ def load_and_preprocess_data():
         df['War_Intensity_Code'] = df['War_Intensity'].map(intensity_map)
         
         df = df.sort_values('week_start').reset_index(drop=True)
-        df['War_Intensity_Lag1'] = df['War_Intensity_Code'].shift(1)
+        df['War_Intensity_Lag1'] = df['War_Intensity_Code'].shift(1).fillna(0)
+
+        
+   
     
     # STEP 5: Lag Features
     if 'gold_price' in df.columns:
